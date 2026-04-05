@@ -9,7 +9,6 @@ st.set_page_config(
     layout="centered"
 )
 
-# ECO opening family mapping (first letter of ECO code)
 ECO_FAMILIES = {
     'A': 'Flank Openings (A)',
     'B': 'Semi-Open Games (B)',
@@ -18,28 +17,43 @@ ECO_FAMILIES = {
     'E': 'Indian Defences (E)',
 }
 
-def get_time_category(time_control: str) -> str:
-    """Map raw time control string to Bullet/Blitz/Rapid/Classical."""
+# Common popular time controls shown as friendly options
+TIME_PRESETS = {
+    "Bullet  1+0  (60s)":    "1+0",
+    "Bullet  2+1  (120s)":   "2+1",
+    "Blitz   3+0  (180s)":   "3+0",
+    "Blitz   3+2  (260s)":   "3+2",
+    "Blitz   5+0  (300s)":   "5+0",
+    "Blitz   5+3  (420s)":   "5+3",
+    "Rapid   10+0 (600s)":   "10+0",
+    "Rapid   15+10(1000s)":  "15+10",
+    "Classical 30+0(1800s)": "30+0",
+    "Classical 60+0(3600s)": "60+0",
+    "Custom...":              None,
+}
+
+def get_time_category_num(tc: str) -> int:
+    """Return 0=Bullet, 1=Blitz, 2=Rapid, 3=Classical."""
     try:
-        base = int(time_control.split('+')[0])
-        increment = int(time_control.split('+')[1]) if '+' in time_control else 0
-        estimated = base + increment * 40  # rough estimate of total seconds
-        if estimated < 180:
-            return "Bullet"
-        elif estimated < 600:
-            return "Blitz"
-        elif estimated < 1800:
-            return "Rapid"
-        else:
-            return "Classical"
+        parts = tc.split('+')
+        base = int(parts[0])
+        inc  = int(parts[1]) if len(parts) > 1 else 0
+        est  = base + inc * 40
+        if est < 180:   return 0
+        elif est < 600:  return 1
+        elif est < 1800: return 2
+        else:            return 3
     except Exception:
-        return "Unknown"
+        return 1
+
+def get_time_category_label(tc: str) -> str:
+    return ["Bullet", "Blitz", "Rapid", "Classical"][get_time_category_num(tc)]
 
 @st.cache_resource
 def load_assets():
-    model = joblib.load('chess_rf_model.pkl')
-    scaler = joblib.load('scaler.pkl')
-    le_eco = joblib.load('le_eco.pkl')
+    model   = joblib.load('chess_rf_model.pkl')
+    scaler  = joblib.load('scaler.pkl')
+    le_eco  = joblib.load('le_eco.pkl')
     le_time = joblib.load('le_time.pkl')
     return model, scaler, le_eco, le_time
 
@@ -49,12 +63,18 @@ except Exception as e:
     st.error(f"Error loading model files: {e}")
     st.stop()
 
+# Detect model type and feature count for correct inference path
+model_type   = type(model).__name__         # "XGBClassifier" or "RandomForestClassifier"
+n_features   = model.n_features_in_ if hasattr(model, 'n_features_in_') else 5
+model_label  = "XGBoost" if "XGB" in model_type else "Random Forest"
+
 # --- Main UI ---
 st.title("♟️ Chess Win Predictor")
-st.markdown("Enter match details to predict the most likely outcome using a Random Forest model trained on **6M+ Lichess games**.")
-
-st.info("ℹ️ **Usage:** Enter both players' **Elo Ratings** (500–3500), select an **ECO Code** (opening), and pick a **Time Control**.")
-
+st.markdown(
+    f"Predict the outcome of a chess game using a **{model_label}** model "
+    f"trained on **6M+ Lichess games**."
+)
+st.info("ℹ️ **Usage:** Enter both players' **Elo Ratings**, select an **ECO opening code**, and pick a **Time Control**.")
 st.divider()
 
 col1, col2 = st.columns(2)
@@ -62,7 +82,7 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("⚪ White Player")
     white_elo = st.number_input("White Elo Rating", min_value=500, max_value=3500, value=1500)
-    eco_code = st.selectbox(
+    eco_code  = st.selectbox(
         "Opening (ECO Code)",
         le_eco.classes_,
         index=list(le_eco.classes_).index('B00') if 'B00' in le_eco.classes_ else 0
@@ -70,86 +90,86 @@ with col1:
 
 with col2:
     st.subheader("⚫ Black Player")
-    black_elo = st.number_input("Black Elo Rating", min_value=500, max_value=3500, value=1500)
-    time_control = st.selectbox("Time Control Format", le_time.classes_)
+    black_elo    = st.number_input("Black Elo Rating", min_value=500, max_value=3500, value=1500)
+    preset_label = st.selectbox("Time Control", list(TIME_PRESETS.keys()))
+    preset_val   = TIME_PRESETS[preset_label]
 
-# Show derived info to user
-elo_diff = white_elo - black_elo
-time_cat = get_time_category(str(time_control))
+    if preset_val is None:
+        # Custom input
+        time_control = st.text_input(
+            "Enter time control (e.g. 300+5)",
+            value="300+5",
+            help="Format: seconds+increment, e.g. 300+5 means 5 minutes + 5 second increment"
+        )
+        # Validate format
+        try:
+            parts = time_control.split('+')
+            int(parts[0])
+            if len(parts) > 1: int(parts[1])
+        except Exception:
+            st.error("Invalid format. Use seconds+increment, e.g. 300+5")
+            st.stop()
+    else:
+        time_control = preset_val
+
+# Derived info display
+elo_diff   = white_elo - black_elo
+time_label = get_time_category_label(time_control)
 eco_family = ECO_FAMILIES.get(eco_code[0].upper(), "Other") if eco_code else "Unknown"
 
 col_a, col_b, col_c = st.columns(3)
 col_a.metric("Elo Difference", f"{elo_diff:+d}", help="Positive = White advantage")
-col_b.metric("Time Format", time_cat)
+col_b.metric("Time Format",    time_label)
 col_c.metric("Opening Family", eco_family)
 
 st.divider()
 
-button_clicked = st.button("Predict Outcome", type="primary", use_container_width=True)
-
-if button_clicked:
+if st.button("Predict Outcome", type="primary", use_container_width=True):
     st.write("---")
 
-    # --- Safe encoding with fallback for unseen labels ---
-    def safe_encode(encoder, value):
+    # Safe encode — use a sensible fixed default instead of random first-char match
+    def safe_encode(encoder, value, default):
         if value in encoder.classes_:
             return encoder.transform([value])[0]
-        # Fallback: find closest alphabetically
-        classes = list(encoder.classes_)
-        closest = min(classes, key=lambda x: abs(ord(x[0]) - ord(str(value)[0])))
-        st.warning(f"'{value}' not seen during training — using closest match '{closest}'.")
-        return encoder.transform([closest])[0]
+        fallback = default if default in encoder.classes_ else encoder.classes_[0]
+        st.warning(f"'{value}' not seen in training data — using default '{fallback}'.")
+        return encoder.transform([fallback])[0]
 
-    encoded_eco = safe_encode(le_eco, eco_code)
-    encoded_time = safe_encode(le_time, time_control)
+    encoded_eco  = safe_encode(le_eco,  eco_code,     'B00')
+    encoded_time = safe_encode(le_time, time_control, '300+0')
 
-    elo_difference = white_elo - black_elo
-    abs_elo_diff = abs(elo_difference)
-
-    # Time category: 0=Bullet, 1=Blitz, 2=Rapid, 3=Classical
-    time_cat_map = {"Bullet": 0, "Blitz": 1, "Rapid": 2, "Classical": 3, "Unknown": 1}
-    time_category_num = time_cat_map.get(get_time_category(str(time_control)), 1)
-
-    # ECO family: A=0, B=1, C=2, D=3, E=4
-    eco_family_num = ord(eco_code[0].upper()) - ord('A') if eco_code else 1
-    eco_family_num = max(0, min(eco_family_num, 4))  # clamp to 0-4
-
-    close_match = 1 if abs_elo_diff < 100 else 0
-
-    # Detect whether the loaded model expects 5 or 9 features
-    n_features = model.n_features_in_ if hasattr(model, 'n_features_in_') else 5
+    elo_difference   = white_elo - black_elo
+    abs_elo_diff     = abs(elo_difference)
+    close_match      = 1 if abs_elo_diff < 100 else 0
+    eco_family_num   = max(0, min(ord(eco_code[0].upper()) - ord('A'), 4))
+    time_category_num = get_time_category_num(time_control)
 
     if n_features >= 9:
         input_data = pd.DataFrame({
-            'WhiteElo': [white_elo],
-            'BlackElo': [black_elo],
-            'ECO': [encoded_eco],
-            'TimeControl': [encoded_time],
-            'EloDifference': [elo_difference],
-            'AbsEloDiff': [abs_elo_diff],
-            'CloseMatch': [close_match],
-            'ECO_Family': [eco_family_num],
+            'WhiteElo':     [white_elo],
+            'BlackElo':     [black_elo],
+            'ECO':          [encoded_eco],
+            'TimeControl':  [encoded_time],
+            'EloDifference':[elo_difference],
+            'AbsEloDiff':   [abs_elo_diff],
+            'CloseMatch':   [close_match],
+            'ECO_Family':   [eco_family_num],
             'TimeCategory': [time_category_num],
         })
     else:
         input_data = pd.DataFrame({
-            'WhiteElo': [white_elo],
-            'BlackElo': [black_elo],
-            'ECO': [encoded_eco],
-            'TimeControl': [encoded_time],
-            'EloDifference': [elo_difference],
+            'WhiteElo':     [white_elo],
+            'BlackElo':     [black_elo],
+            'ECO':          [encoded_eco],
+            'TimeControl':  [encoded_time],
+            'EloDifference':[elo_difference],
         })
 
     input_scaled = scaler.transform(input_data)
+    prediction   = model.predict(input_scaled)[0]
+    probs        = model.predict_proba(input_scaled)[0] if hasattr(model, "predict_proba") else None
 
-    prediction = model.predict(input_scaled)[0]
-    probs = model.predict_proba(input_scaled)[0] if hasattr(model, "predict_proba") else None
-
-    # --- Outcome display ---
     st.subheader("📊 Match Prediction")
-
-    outcome_labels = {0: "Black", 1: "White", 2: "Draw"}
-    outcome_label = outcome_labels.get(prediction, "Unknown")
 
     if prediction == 1:
         st.success("🏆 **White is favored to Win!**")
@@ -158,36 +178,24 @@ if button_clicked:
     else:
         st.warning("🤝 **The match is likely to end in a Draw.**")
 
-    # --- Confidence level ---
     if probs is not None:
         max_prob = max(probs)
         if max_prob >= 0.55:
-            confidence = "High"
-            conf_color = "🟢"
+            confidence, conf_color = "High",   "🟢"
         elif max_prob >= 0.42:
-            confidence = "Medium"
-            conf_color = "🟡"
+            confidence, conf_color = "Medium",  "🟡"
         else:
-            confidence = "Low"
-            conf_color = "🔴"
+            confidence, conf_color = "Low",    "🔴"
 
         st.markdown(f"**Confidence:** {conf_color} {confidence} ({max_prob*100:.1f}%)")
 
-        # Context hint
         if abs_elo_diff < 100:
             st.caption("Players are closely matched — draw is relatively more likely.")
         elif abs_elo_diff > 300:
             stronger = "White" if elo_difference > 0 else "Black"
             st.caption(f"Large Elo gap ({abs_elo_diff} pts) — {stronger} has a significant advantage.")
 
-        # Probability breakdown
         st.markdown("**Probability Breakdown:**")
-        prob_data = pd.DataFrame({
-            "Outcome": ["⚫ Black Win", "⚪ White Win", "🤝 Draw"],
-            "Probability": [f"{probs[0]*100:.1f}%", f"{probs[1]*100:.1f}%", f"{probs[2]*100:.1f}%"],
-            "Bar": [probs[0], probs[1], probs[2]]
-        })
-
-        for _, row in prob_data.iterrows():
-            st.markdown(f"{row['Outcome']}: **{row['Probability']}**")
-            st.progress(float(row['Bar']))
+        for label, prob in [("⚫ Black Win", probs[0]), ("⚪ White Win", probs[1]), ("🤝 Draw", probs[2])]:
+            st.markdown(f"{label}: **{prob*100:.1f}%**")
+            st.progress(float(prob))
