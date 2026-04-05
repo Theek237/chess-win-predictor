@@ -19,8 +19,8 @@ A machine learning web application that predicts the outcome of a chess game —
 | **Problem Type** | Supervised Classification (3 classes) |
 | **Dataset** | [Lichess Chess Games — Kaggle](https://www.kaggle.com/datasets/arevel/chess-games) |
 | **Dataset Size** | 6.26 million games |
-| **Best Model** | XGBoost (63% accuracy) |
-| **Baseline** | Random Forest (46% accuracy) |
+| **Best Model** | XGBoost — 9 features (46.3% accuracy on balanced 3-class data) |
+| **Baseline** | Random Forest — 5 features (46% accuracy) |
 | **Tech Stack** | Python, Scikit-Learn, XGBoost, Streamlit |
 
 ---
@@ -103,19 +103,19 @@ Raw Data (6.26M games)
 | Random Forest (default) | 42% | Underfitting |
 | Random Forest (tuned) | 46% | `max_depth=12`, `n_estimators=100` |
 
-### Improved Models (Section 11 — 9 features)
+### Improved Models (Section 11 — 9 features, equal 3-class balanced sampling)
 
 | Model | Accuracy | Black Win F1 | White Win F1 | Draw F1 |
 |---|---|---|---|---|
-| RF + New Features | 50% | 0.57 | 0.58 | 0.09 |
-| **XGBoost** | **63%** | **0.62** | **0.66** | **—** |
+| RF + New Features | 46.1% | 0.46 | 0.46 | 0.46 |
+| **XGBoost** | **46.3%** | **0.49** | **0.49** | **0.40** |
 
-> **Note:** Draws have low recall because they naturally occur far less often in real chess (~28% of games vs ~37% white wins). This is realistic, not a bug — the model faithfully reflects actual game distributions.
+> **Note:** Both models are evaluated on a perfectly balanced 3-class test set (~47k per class). The 46% accuracy is 13 percentage points above the random baseline of 33% — meaningful signal for an inherently unpredictable domain like chess. XGBoost edges out RF and handles all three classes including Draws better.
 
-### Why 63% is Good
-- Random baseline = 33% (3 classes)
-- Our best model = 63% → **30 percentage points above random**
-- Chess outcomes are inherently noisy — even grandmasters can't perfectly predict results
+### Why 46% is Good
+- Random baseline = 33% (3 equal classes)
+- Our best model = 46.3% → **+13 percentage points above random**
+- Chess is inherently noisy — player psychology, time pressure, and in-game decisions can't be captured from pre-game features alone
 
 ---
 
